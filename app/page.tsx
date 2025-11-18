@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { FileText, Download, Save, Sparkles, Plus, Trash2, Type, Image, Layout } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { FileText, Download, Save, Sparkles, Plus, Trash2, Type, Image, Layout, CreditCard, AlertCircle, Loader2 } from 'lucide-react'
 import { PDFDocument, DocumentElement, Template } from '@/types/pdf'
 import { generatePDF } from '@/lib/pdf-generator'
-import { supabase } from '@/lib/supabase'
+import { createSupabaseBrowserClient } from '@/lib/supabase-client'
 import { format } from 'date-fns'
 
 const TEMPLATES: Template[] = [
@@ -45,7 +46,16 @@ const TEMPLATES: Template[] = [
   }
 ]
 
+const CREDIT_COST = 5 // Credits per save
+
 export default function PDFBuilderPro() {
+  const router = useRouter()
+  const [isLoading, setIsLoading] = useState(true)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authToken, setAuthToken] = useState<string | null>(null)
+  const [credits, setCredits] = useState<number>(0)
+  const [loadingCredits, setLoadingCredits] = useState(false)
+
   const [document, setDocument] = useState<PDFDocument>({
     id: '',
     title: 'Untitled Document',
@@ -72,7 +82,60 @@ export default function PDFBuilderPro() {
   const [aiPrompt, setAiPrompt] = useState('')
   const [generating, setGenerating] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning', text: string } | null>(null)
+
+  // AUTH GUARD - Check authentication on mount
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const supabase = createSupabaseBrowserClient()
+        const { data: { session }, error } = await supabase.auth.getSession()
+
+        if (error || !session) {
+          // Redirect to login page
+          router.push('/login?redirect=/apps/pdf-builder')
+          return
+        }
+
+        setAuthToken(session.access_token)
+        setIsAuthenticated(true)
+        
+        // Load credit balance
+        await fetchCredits(session.access_token)
+
+      } catch (error) {
+        console.error('Auth check failed:', error)
+        router.push('/login')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    checkAuth()
+  }, [router])
+
+  // Fetch user's credit balance
+  async function fetchCredits(token: string) {
+    if (!token) return
+    
+    setLoadingCredits(true)
+    try {
+      const response = await fetch('/api/credits/balance', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setCredits(data.credits || 0)
+      }
+    } catch (error) {
+      console.error('Failed to fetch credits:', error)
+    } finally {
+      setLoadingCredits(false)
+    }
+  }
 
   function selectTemplate(template: Template) {
     setDocument(prev => ({
@@ -98,85 +161,82 @@ export default function PDFBuilderPro() {
       align: 'left'
     }
 
-    setDocument(prev => {
-      const newPages = [...prev.pages]
-      newPages[currentPage].elements.push(newElement)
-      return { ...prev, pages: newPages }
-    })
-    setSelectedElement(newElement.id)
+    setDocument(prev => ({
+      ...prev,
+      pages: prev.pages.map((page, idx) =>
+        idx === currentPage
+          ? { ...page, elements: [...page.elements, newElement] }
+          : page
+      )
+    }))
   }
 
   function addImageElement() {
     const newElement: DocumentElement = {
       id: Date.now().toString(),
       type: 'image',
+      content: 'https://via.placeholder.com/300x200',
       x: 100,
       y: 100 + (document.pages[currentPage].elements.length * 50),
-      width: 200,
-      height: 200,
-      imageUrl: '/placeholder-image.png'
+      width: 300,
+      height: 200
     }
 
-    setDocument(prev => {
-      const newPages = [...prev.pages]
-      newPages[currentPage].elements.push(newElement)
-      return { ...prev, pages: newPages }
-    })
-    setSelectedElement(newElement.id)
-  }
-
-  function addHeadingElement() {
-    const newElement: DocumentElement = {
-      id: Date.now().toString(),
-      type: 'text',
-      content: 'Heading Text',
-      x: 100,
-      y: 100 + (document.pages[currentPage].elements.length * 50),
-      width: 500,
-      height: 60,
-      fontSize: 32,
-      fontFamily: 'Helvetica',
-      fontWeight: 'bold',
-      color: '#003366',
-      align: 'left'
-    }
-
-    setDocument(prev => {
-      const newPages = [...prev.pages]
-      newPages[currentPage].elements.push(newElement)
-      return { ...prev, pages: newPages }
-    })
-    setSelectedElement(newElement.id)
+    setDocument(prev => ({
+      ...prev,
+      pages: prev.pages.map((page, idx) =>
+        idx === currentPage
+          ? { ...page, elements: [...page.elements, newElement] }
+          : page
+      )
+    }))
   }
 
   function deleteElement(elementId: string) {
-    setDocument(prev => {
-      const newPages = [...prev.pages]
-      newPages[currentPage].elements = newPages[currentPage].elements.filter(
-        el => el.id !== elementId
+    setDocument(prev => ({
+      ...prev,
+      pages: prev.pages.map((page, idx) =>
+        idx === currentPage
+          ? { ...page, elements: page.elements.filter(el => el.id !== elementId) }
+          : page
       )
-      return { ...prev, pages: newPages }
-    })
+    }))
     setSelectedElement(null)
   }
 
   function updateElement(elementId: string, updates: Partial<DocumentElement>) {
-    setDocument(prev => {
-      const newPages = [...prev.pages]
-      const elementIndex = newPages[currentPage].elements.findIndex(el => el.id === elementId)
-      if (elementIndex !== -1) {
-        newPages[currentPage].elements[elementIndex] = {
-          ...newPages[currentPage].elements[elementIndex],
-          ...updates
-        }
-      }
-      return { ...prev, pages: newPages }
-    })
+    setDocument(prev => ({
+      ...prev,
+      pages: prev.pages.map((page, idx) =>
+        idx === currentPage
+          ? {
+              ...page,
+              elements: page.elements.map(el =>
+                el.id === elementId ? { ...el, ...updates } : el
+              )
+            }
+          : page
+      )
+    }))
   }
 
-  async function generateWithAI() {
+  function addPage() {
+    setDocument(prev => ({
+      ...prev,
+      pages: [
+        ...prev.pages,
+        {
+          id: Date.now().toString(),
+          elements: []
+        }
+      ]
+    }))
+    setCurrentPage(document.pages.length)
+  }
+
+  async function generateContent() {
     if (!aiPrompt.trim()) {
-      setMessage({ type: 'error', text: 'Please enter a prompt' })
+      setMessage({ type: 'warning', text: 'Please enter a prompt for AI generation' })
       setTimeout(() => setMessage(null), 3000)
       return
     }
@@ -185,43 +245,46 @@ export default function PDFBuilderPro() {
     try {
       const response = await fetch('/api/generate-content', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          prompt: aiPrompt,
-          template: document.template
-        })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ prompt: aiPrompt })
       })
 
-      if (!response.ok) throw new Error('AI generation failed')
-      
+      if (!response.ok) throw new Error('Generation failed')
+
       const data = await response.json()
       
-      // Add generated content as text elements
-      const newElements: DocumentElement[] = data.sections.map((section: any, index: number) => ({
-        id: `ai-${Date.now()}-${index}`,
+      // Add generated text as new element
+      const newElement: DocumentElement = {
+        id: Date.now().toString(),
         type: 'text',
-        content: section.content,
-        x: 72,
-        y: 72 + (index * 150),
-        width: 468, // Letter width (612) - margins (72*2)
-        height: 100,
-        fontSize: section.isHeading ? 24 : 12,
+        content: data.content,
+        x: 100,
+        y: 100,
+        width: 400,
+        height: 200,
+        fontSize: 14,
         fontFamily: 'Helvetica',
-        fontWeight: section.isHeading ? 'bold' : 'normal',
-        color: section.isHeading ? '#003366' : '#000000',
+        color: '#000000',
         align: 'left'
+      }
+
+      setDocument(prev => ({
+        ...prev,
+        pages: prev.pages.map((page, idx) =>
+          idx === currentPage
+            ? { ...page, elements: [...page.elements, newElement] }
+            : page
+        )
       }))
 
-      setDocument(prev => {
-        const newPages = [...prev.pages]
-        newPages[currentPage].elements = [...newPages[currentPage].elements, ...newElements]
-        return { ...prev, pages: newPages }
-      })
-
-      setMessage({ type: 'success', text: 'Content generated successfully!' })
+      setMessage({ type: 'success', text: 'AI content generated!' })
       setAiPrompt('')
+
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'AI generation failed' })
+      setMessage({ type: 'error', text: 'Failed to generate content' })
     } finally {
       setGenerating(false)
       setTimeout(() => setMessage(null), 5000)
@@ -229,38 +292,74 @@ export default function PDFBuilderPro() {
   }
 
   async function saveDocument() {
+    // PRE-FLIGHT: Check credits before attempting save
+    if (credits < CREDIT_COST) {
+      setMessage({ 
+        type: 'error', 
+        text: `Insufficient credits. Need ${CREDIT_COST}, have ${credits}. Please purchase more credits.` 
+      })
+      setTimeout(() => setMessage(null), 5000)
+      return
+    }
+
+    if (!authToken) {
+      setMessage({ type: 'error', text: 'Authentication required' })
+      return
+    }
+
     setSaving(true)
     try {
+      const supabase = createSupabaseBrowserClient()
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Please sign in to save')
 
-      const { error } = await supabase
+      if (!user) throw new Error('User not authenticated')
+
+      // Save document to database
+      const { error: saveError } = await supabase
         .from('pdf_documents')
         .insert({
           user_id: user.id,
           title: document.title,
           template: document.template,
           content: document,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          created_at: new Date().toISOString()
         })
 
-      if (error) throw error
+      if (saveError) throw saveError
 
-      // Deduct credits
-      await fetch('/api/credits/deduct', {
+      // ATOMIC: Deduct credits with proper error handling
+      const deductResponse = await fetch('/api/credits/deduct', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
         body: JSON.stringify({ 
-          user_id: user.id,
-          amount: 20,
-          reason: 'PDF Document Saved'
+          amount: CREDIT_COST,
+          reason: `PDF Document Saved: ${document.title}`
         })
       })
 
-      setMessage({ type: 'success', text: 'Document saved! (20 credits used)' })
+      if (!deductResponse.ok) {
+        const errorData = await deductResponse.json()
+        throw new Error(errorData.error || 'Credit deduction failed')
+      }
+
+      const deductData = await deductResponse.json()
+      
+      // Update local credit balance
+      setCredits(deductData.remaining)
+
+      setMessage({ 
+        type: 'success', 
+        text: `Document saved! ${CREDIT_COST} credits used. ${deductData.remaining} credits remaining.` 
+      })
+
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'Failed to save document' })
+      setMessage({ 
+        type: 'error', 
+        text: error.message || 'Failed to save document' 
+      })
     } finally {
       setSaving(false)
       setTimeout(() => setMessage(null), 5000)
@@ -271,7 +370,7 @@ export default function PDFBuilderPro() {
     try {
       const pdf = generatePDF(document)
       pdf.save(`${document.title.replace(/\s+/g, '-').toLowerCase()}.pdf`)
-      setMessage({ type: 'success', text: 'PDF exported successfully!' })
+      setMessage({ type: 'success', text: 'PDF exported successfully! (Free - no credits used)' })
       setTimeout(() => setMessage(null), 3000)
     } catch (error: any) {
       setMessage({ type: 'error', text: 'Failed to export PDF' })
@@ -279,35 +378,81 @@ export default function PDFBuilderPro() {
     }
   }
 
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading PDF Builder...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Auth required state
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 text-red-600 mx-auto mb-4" />
+          <p className="text-gray-600">Redirecting to login...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Template selection screen
   if (showTemplates) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <div className="flex items-center justify-center gap-3 mb-4">
-              <div className="p-3 bg-primary rounded-xl">
-                <FileText className="w-10 h-10 text-white" />
+          {/* Header with Credit Balance */}
+          <div className="flex items-center justify-between mb-12">
+            <div className="text-center flex-1">
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <div className="p-3 bg-blue-600 rounded-xl">
+                  <FileText className="w-10 h-10 text-white" />
+                </div>
+                <h1 className="text-5xl font-bold text-gray-900">PDF Builder Pro</h1>
               </div>
-              <h1 className="text-5xl font-bold text-gray-900">PDF Builder Pro</h1>
+              <p className="text-xl text-gray-600">Create professional PDFs with AI assistance</p>
             </div>
-            <p className="text-xl text-gray-600">Create professional PDFs with AI-powered content</p>
+            
+            {/* Credit Balance Badge */}
+            <div className="bg-white rounded-xl shadow-lg px-6 py-3 border-2 border-blue-200">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-blue-600" />
+                <div>
+                  <div className="text-xs text-gray-500 uppercase tracking-wide">Credits</div>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {loadingCredits ? (
+                      <Loader2 className="w-5 h-5 animate-spin inline" />
+                    ) : (
+                      credits
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Templates Grid */}
+          <div className="grid md:grid-cols-3 gap-6">
             {TEMPLATES.map(template => (
               <button
                 key={template.id}
                 onClick={() => selectTemplate(template)}
-                className="group bg-white rounded-2xl p-6 shadow-md hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1"
+                className="bg-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-1 text-left border-2 border-transparent hover:border-blue-500"
               >
-                <div className="aspect-[8.5/11] bg-gray-100 rounded-lg mb-4 flex items-center justify-center">
-                  <FileText className="w-20 h-20 text-gray-400 group-hover:text-primary transition-colors" />
+                <div className="aspect-[3/4] bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg mb-4 flex items-center justify-center">
+                  <Layout className="w-16 h-16 text-gray-400" />
                 </div>
                 <h3 className="text-xl font-bold text-gray-900 mb-2">{template.name}</h3>
                 <p className="text-gray-600 text-sm">{template.description}</p>
-                <span className="inline-block mt-3 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                <div className="mt-4 inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-semibold">
                   {template.category}
-                </span>
+                </div>
               </button>
             ))}
           </div>
@@ -316,128 +461,182 @@ export default function PDFBuilderPro() {
     )
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setShowTemplates(true)}
-                className="text-gray-600 hover:text-gray-900"
-              >
-                <Layout className="w-6 h-6" />
-              </button>
-              <input
-                type="text"
-                value={document.title}
-                onChange={(e) => setDocument(prev => ({ ...prev, title: e.target.value }))}
-                className="text-2xl font-bold border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-primary rounded px-2"
-              />
-            </div>
+  // Main editor view
+  const currentPageData = document.pages[currentPage]
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={saveDocument}
-                disabled={saving}
-                className="btn-secondary flex items-center gap-2"
-              >
-                <Save className="w-5 h-5" />
-                {saving ? 'Saving...' : 'Save (20 credits)'}
-              </button>
-              <button
-                onClick={exportPDF}
-                className="btn-primary flex items-center gap-2"
-              >
-                <Download className="w-5 h-5" />
-                Export PDF
-              </button>
-            </div>
+  return (
+    <div className="min-h-screen bg-gray-100">
+      {/* Top Toolbar */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowTemplates(true)}
+              className="text-gray-600 hover:text-gray-900 flex items-center gap-2"
+            >
+              <Layout className="w-5 h-5" />
+              Templates
+            </button>
+            <input
+              type="text"
+              value={document.title}
+              onChange={(e) => setDocument(prev => ({ ...prev, title: e.target.value }))}
+              className="text-xl font-semibold px-3 py-1 border-b-2 border-transparent hover:border-gray-300 focus:border-blue-500 outline-none"
+              placeholder="Document Title"
+            />
           </div>
 
-          {message && (
-            <div className={`mt-4 p-3 rounded-lg ${
-              message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-            }`}>
-              {message.text}
+          {/* Credit Balance & Actions */}
+          <div className="flex items-center gap-4">
+            {/* Credit Display */}
+            <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-lg">
+              <CreditCard className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-semibold text-gray-700">
+                {loadingCredits ? '...' : credits} credits
+              </span>
             </div>
-          )}
-        </div>
-      </header>
 
-      <div className="flex h-[calc(100vh-89px)]">
+            {/* Action Buttons */}
+            <button
+              onClick={saveDocument}
+              disabled={saving || credits < CREDIT_COST}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={credits < CREDIT_COST ? `Need ${CREDIT_COST} credits to save` : ''}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save ({CREDIT_COST} credits)
+                </>
+              )}
+            </button>
+            <button
+              onClick={exportPDF}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Export PDF (Free)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Message Banner */}
+      {message && (
+        <div className={`px-6 py-3 text-sm font-medium ${
+          message.type === 'success' ? 'bg-green-50 text-green-800 border-b border-green-200' :
+          message.type === 'warning' ? 'bg-yellow-50 text-yellow-800 border-b border-yellow-200' :
+          'bg-red-50 text-red-800 border-b border-red-200'
+        }`}>
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            {message.text}
+          </div>
+        </div>
+      )}
+
+      <div className="flex">
         {/* Left Sidebar - Tools */}
-        <aside className="w-64 bg-white border-r border-gray-200 p-4 overflow-y-auto">
-          <h3 className="font-bold text-gray-900 mb-4">Add Elements</h3>
-          
+        <div className="w-64 bg-white border-r border-gray-200 p-4">
           <div className="space-y-2">
             <button
-              onClick={addHeadingElement}
-              className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              <Type className="w-5 h-5 text-primary" />
-              <span className="font-medium">Heading</span>
-            </button>
-
-            <button
               onClick={addTextElement}
-              className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <Type className="w-5 h-5 text-gray-600" />
-              <span className="font-medium">Text Block</span>
+              <span className="font-medium">Add Text</span>
             </button>
-
             <button
               onClick={addImageElement}
-              className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <Image className="w-5 h-5 text-gray-600" />
-              <span className="font-medium">Image</span>
+              <span className="font-medium">Add Image</span>
+            </button>
+            <button
+              onClick={addPage}
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Plus className="w-5 h-5 text-gray-600" />
+              <span className="font-medium">Add Page</span>
             </button>
           </div>
 
-          <div className="mt-8">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-yellow-500" />
-              AI Content Generator
+          {/* AI Generator */}
+          <div className="mt-8 pt-8 border-t border-gray-200">
+            <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-blue-600" />
+              AI Generator
             </h3>
-            
             <textarea
               value={aiPrompt}
               onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Describe what content you need..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              placeholder="Describe what you want to create..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               rows={4}
             />
-            
             <button
-              onClick={generateWithAI}
+              onClick={generateContent}
               disabled={generating || !aiPrompt.trim()}
-              className="w-full mt-3 btn-primary flex items-center justify-center gap-2"
+              className="w-full mt-2 btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Sparkles className="w-5 h-5" />
-              {generating ? 'Generating...' : 'Generate with AI'}
+              {generating ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Generate
+                </>
+              )}
             </button>
           </div>
-        </aside>
+        </div>
 
         {/* Main Canvas */}
-        <main className="flex-1 overflow-auto bg-gray-200 p-8">
-          <div 
-            className="bg-white shadow-2xl mx-auto"
-            style={{
-              width: document.settings.orientation === 'portrait' ? '816px' : '1056px',
-              minHeight: document.settings.orientation === 'portrait' ? '1056px' : '816px'
-            }}
-          >
-            {/* Page Canvas */}
-            <div className="relative" style={{ padding: `${document.settings.margins.top}px ${document.settings.margins.right}px ${document.settings.margins.bottom}px ${document.settings.margins.left}px` }}>
-              {document.pages[currentPage].elements.map(element => (
+        <div className="flex-1 p-8 overflow-auto">
+          <div className="max-w-4xl mx-auto">
+            {/* Page Tabs */}
+            <div className="flex gap-2 mb-4">
+              {document.pages.map((page, idx) => (
+                <button
+                  key={page.id}
+                  onClick={() => setCurrentPage(idx)}
+                  className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
+                    idx === currentPage
+                      ? 'bg-white text-blue-600 border-t-2 border-l-2 border-r-2 border-blue-600'
+                      : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                  }`}
+                >
+                  Page {idx + 1}
+                </button>
+              ))}
+            </div>
+
+            {/* Canvas */}
+            <div 
+              className="bg-white shadow-2xl rounded-lg overflow-hidden"
+              style={{ 
+                width: '816px', // 8.5" at 96 DPI
+                minHeight: '1056px', // 11" at 96 DPI
+                position: 'relative'
+              }}
+            >
+              {/* Page Elements */}
+              {currentPageData.elements.map(element => (
                 <div
                   key={element.id}
                   onClick={() => setSelectedElement(element.id)}
-                  className={`absolute cursor-move ${selectedElement === element.id ? 'ring-2 ring-primary' : ''}`}
+                  className={`absolute cursor-pointer transition-all ${
+                    selectedElement === element.id ? 'ring-2 ring-blue-500' : ''
+                  }`}
                   style={{
                     left: element.x,
                     top: element.y,
@@ -447,155 +646,59 @@ export default function PDFBuilderPro() {
                 >
                   {element.type === 'text' && (
                     <div
-                      contentEditable
-                      onBlur={(e) => updateElement(element.id, { content: e.currentTarget.textContent || '' })}
                       style={{
                         fontSize: element.fontSize,
                         fontFamily: element.fontFamily,
-                        fontWeight: element.fontWeight,
                         color: element.color,
                         textAlign: element.align,
-                        lineHeight: 1.5
+                        lineHeight: '1.5'
                       }}
-                      className="outline-none"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        const newContent = prompt('Edit text:', element.content)
+                        if (newContent !== null) {
+                          updateElement(element.id, { content: newContent })
+                        }
+                      }}
                     >
                       {element.content}
                     </div>
                   )}
-
                   {element.type === 'image' && (
-                    <div className="w-full h-full bg-gray-200 flex items-center justify-center rounded">
-                      <Image className="w-12 h-12 text-gray-400" />
-                    </div>
+                    <img 
+                      src={element.content} 
+                      alt="Document element"
+                      className="w-full h-full object-cover"
+                    />
                   )}
 
+                  {/* Delete button for selected element */}
                   {selectedElement === element.id && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
                         deleteElement(element.id)
                       }}
-                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                      className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3 h-3" />
                     </button>
                   )}
                 </div>
               ))}
-            </div>
-          </div>
 
-          {/* Page Navigation */}
-          <div className="flex items-center justify-center gap-4 mt-8">
-            <button
-              onClick={() => setCurrentPage(prev => Math.max(0, prev - 1))}
-              disabled={currentPage === 0}
-              className="px-4 py-2 bg-white rounded-lg shadow disabled:opacity-50"
-            >
-              Previous
-            </button>
-            <span className="text-gray-600">
-              Page {currentPage + 1} of {document.pages.length}
-            </span>
-            <button
-              onClick={() => {
-                if (currentPage === document.pages.length - 1) {
-                  setDocument(prev => ({
-                    ...prev,
-                    pages: [...prev.pages, { id: Date.now().toString(), elements: [] }]
-                  }))
-                }
-                setCurrentPage(prev => prev + 1)
-              }}
-              className="px-4 py-2 bg-white rounded-lg shadow"
-            >
-              Next / Add Page
-            </button>
-          </div>
-        </main>
-
-        {/* Right Sidebar - Properties */}
-        {selectedElement && (
-          <aside className="w-64 bg-white border-l border-gray-200 p-4 overflow-y-auto">
-            <h3 className="font-bold text-gray-900 mb-4">Element Properties</h3>
-            {(() => {
-              const element = document.pages[currentPage].elements.find(el => el.id === selectedElement)
-              if (!element) return null
-
-              return (
-                <div className="space-y-4">
-                  {element.type === 'text' && (
-                    <>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Font Size
-                        </label>
-                        <input
-                          type="number"
-                          value={element.fontSize}
-                          onChange={(e) => updateElement(element.id, { fontSize: parseInt(e.target.value) })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Color
-                        </label>
-                        <input
-                          type="color"
-                          value={element.color}
-                          onChange={(e) => updateElement(element.id, { color: e.target.value })}
-                          className="w-full h-10 border border-gray-300 rounded-lg"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Alignment
-                        </label>
-                        <select
-                          value={element.align}
-                          onChange={(e) => updateElement(element.id, { align: e.target.value as any })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                        >
-                          <option value="left">Left</option>
-                          <option value="center">Center</option>
-                          <option value="right">Right</option>
-                          <option value="justify">Justify</option>
-                        </select>
-                      </div>
-                    </>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Width
-                    </label>
-                    <input
-                      type="number"
-                      value={element.width}
-                      onChange={(e) => updateElement(element.id, { width: parseInt(e.target.value) })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Height
-                    </label>
-                    <input
-                      type="number"
-                      value={element.height}
-                      onChange={(e) => updateElement(element.id, { height: parseInt(e.target.value) })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                    />
+              {/* Empty state */}
+              {currentPageData.elements.length === 0 && (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+                  <div className="text-center">
+                    <FileText className="w-16 h-16 mx-auto mb-2 opacity-50" />
+                    <p>Click tools on the left to add content</p>
                   </div>
                 </div>
-              )
-            })()}
-          </aside>
-        )}
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
