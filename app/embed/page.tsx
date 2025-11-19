@@ -1,16 +1,15 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, Download, Trash2, Type, Image, Square, Circle, Minus, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Card } from '@/components/ui/card'
-import { createClient } from '@/lib/supabase/client'
+import { createClient } from '@supabase/supabase-js'
 import { jsPDF } from 'jspdf'
 
-type ElementType = 'text' | 'image' | 'rectangle' | 'circle' | 'line'
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+)
+
+type ElementType = 'text' | 'rectangle' | 'circle' | 'line'
 
 interface PDFElement {
   id: string
@@ -28,19 +27,16 @@ interface PageData {
   elements: PDFElement[]
 }
 
-const CREDIT_COST = 5 // 5 credits per PDF export
+const CREDIT_COST = 5
 
 export default function PDFBuilderEmbed() {
-  const supabase = createClient()
   const [pages, setPages] = useState<PageData[]>([{ elements: [] }])
   const [currentPage, setCurrentPage] = useState(0)
   const [selectedElement, setSelectedElement] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const [credits, setCredits] = useState<number | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
-  const canvasRef = useRef<HTMLDivElement>(null)
 
-  // Load user credits on mount
   useEffect(() => {
     loadUserCredits()
   }, [])
@@ -97,9 +93,7 @@ export default function PDFBuilderEmbed() {
     const updatedPages = [...pages]
     updatedPages[currentPage].elements = updatedPages[currentPage].elements.filter(el => el.id !== id)
     setPages(updatedPages)
-    if (selectedElement === id) {
-      setSelectedElement(null)
-    }
+    if (selectedElement === id) setSelectedElement(null)
   }
 
   const addPage = () => {
@@ -108,9 +102,8 @@ export default function PDFBuilderEmbed() {
   }
 
   const exportPDF = async () => {
-    // Check credits
     if (credits === null || credits < CREDIT_COST) {
-      alert(`Insufficient credits. You need ${CREDIT_COST} credits to export a PDF.`)
+      alert(`Insufficient credits. You need ${CREDIT_COST} credits to export.`)
       return
     }
 
@@ -122,13 +115,10 @@ export default function PDFBuilderEmbed() {
     setIsExporting(true)
 
     try {
-      // Create PDF
       const pdf = new jsPDF()
       
       pages.forEach((page, pageIndex) => {
-        if (pageIndex > 0) {
-          pdf.addPage()
-        }
+        if (pageIndex > 0) pdf.addPage()
         
         page.elements.forEach(element => {
           if (element.type === 'text' && element.content) {
@@ -148,7 +138,6 @@ export default function PDFBuilderEmbed() {
         })
       })
 
-      // Deduct credits
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ credits: credits - CREDIT_COST })
@@ -156,7 +145,6 @@ export default function PDFBuilderEmbed() {
 
       if (updateError) throw updateError
 
-      // Log transaction
       await supabase.from('credit_transactions').insert({
         user_id: userId,
         amount: -CREDIT_COST,
@@ -165,12 +153,8 @@ export default function PDFBuilderEmbed() {
         balance_after: credits - CREDIT_COST
       })
 
-      // Update local credits
       setCredits(credits - CREDIT_COST)
-
-      // Download PDF
       pdf.save('document.pdf')
-
       alert('PDF exported successfully! 5 credits deducted.')
     } catch (error) {
       console.error('Export error:', error)
@@ -186,140 +170,43 @@ export default function PDFBuilderEmbed() {
     : null
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Minimal Toolbar */}
-      <div className="bg-white border-b border-gray-200 p-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => addElement('text')}
-            className="gap-2"
-          >
-            <Type className="w-4 h-4" />
-            Text
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => addElement('rectangle')}
-            className="gap-2"
-          >
-            <Square className="w-4 h-4" />
-            Rectangle
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => addElement('circle')}
-            className="gap-2"
-          >
-            <Circle className="w-4 h-4" />
-            Circle
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => addElement('line')}
-            className="gap-2"
-          >
-            <Minus className="w-4 h-4" />
-            Line
-          </Button>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f9fafb' }}>
+      {/* Toolbar */}
+      <div style={{ backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button onClick={() => addElement('text')} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' }}>✏️ Text</button>
+          <button onClick={() => addElement('rectangle')} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' }}>⬜ Box</button>
+          <button onClick={() => addElement('circle')} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' }}>⭕ Circle</button>
+          <button onClick={() => addElement('line')} style={{ padding: '8px 16px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' }}>➖ Line</button>
         </div>
-
-        <div className="flex items-center gap-2">
-          {credits !== null && (
-            <span className="text-sm text-gray-600">
-              {credits} credits
-            </span>
-          )}
-          <Button
-            size="sm"
-            onClick={exportPDF}
-            disabled={isExporting || (credits !== null && credits < CREDIT_COST)}
-            className="gap-2"
-          >
-            <Download className="w-4 h-4" />
-            Export PDF ({CREDIT_COST} credits)
-          </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {credits !== null && <span style={{ fontSize: '14px', color: '#6b7280' }}>{credits} credits</span>}
+          <button onClick={exportPDF} disabled={isExporting || (credits !== null && credits < CREDIT_COST)} style={{ padding: '8px 16px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: isExporting || (credits !== null && credits < CREDIT_COST) ? 'not-allowed' : 'pointer', opacity: isExporting || (credits !== null && credits < CREDIT_COST) ? 0.5 : 1, fontSize: '14px' }}>
+            {isExporting ? '⏳ Exporting...' : `📥 Export (${CREDIT_COST} credits)`}
+          </button>
         </div>
       </div>
 
-      {/* Main Editor Area */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main Area */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Canvas */}
-        <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
-          <div
-            ref={canvasRef}
-            className="bg-white shadow-lg relative"
-            style={{ width: '210mm', height: '297mm' }}
-          >
-            {/* Page Content */}
-            <div className="absolute inset-0 p-8">
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px', overflow: 'auto' }}>
+          <div style={{ width: '210mm', height: '297mm', backgroundColor: 'white', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', position: 'relative' }}>
+            <div style={{ position: 'absolute', inset: 0, padding: '32px' }}>
               {currentPageData.elements.map((element) => (
-                <div
-                  key={element.id}
-                  className={`absolute cursor-move border-2 ${
-                    selectedElement === element.id ? 'border-blue-500' : 'border-transparent'
-                  } hover:border-blue-300`}
-                  style={{
-                    left: `${element.x}px`,
-                    top: `${element.y}px`,
-                    width: element.width ? `${element.width}px` : 'auto',
-                    height: element.height ? `${element.height}px` : 'auto'
-                  }}
-                  onClick={() => setSelectedElement(element.id)}
-                >
-                  {element.type === 'text' && (
-                    <p
-                      style={{
-                        fontSize: `${element.fontSize}px`,
-                        color: element.color
-                      }}
-                    >
-                      {element.content}
-                    </p>
-                  )}
-                  {element.type === 'rectangle' && (
-                    <div
-                      className="w-full h-full border-2"
-                      style={{ borderColor: element.color }}
-                    />
-                  )}
-                  {element.type === 'circle' && (
-                    <div
-                      className="w-full h-full rounded-full border-2"
-                      style={{ borderColor: element.color }}
-                    />
-                  )}
-                  {element.type === 'line' && (
-                    <div
-                      className="h-0.5"
-                      style={{ backgroundColor: element.color, width: '100px' }}
-                    />
-                  )}
-
+                <div key={element.id} onClick={() => setSelectedElement(element.id)} style={{ position: 'absolute', left: `${element.x}px`, top: `${element.y}px`, width: element.width ? `${element.width}px` : 'auto', height: element.height ? `${element.height}px` : 'auto', border: selectedElement === element.id ? '2px solid #3b82f6' : '2px solid transparent', cursor: 'move', transition: 'border-color 0.2s' }}>
+                  {element.type === 'text' && <p style={{ fontSize: `${element.fontSize}px`, color: element.color, margin: 0, whiteSpace: 'pre-wrap' }}>{element.content}</p>}
+                  {element.type === 'rectangle' && <div style={{ width: '100%', height: '100%', border: `2px solid ${element.color}` }} />}
+                  {element.type === 'circle' && <div style={{ width: '100%', height: '100%', borderRadius: '50%', border: `2px solid ${element.color}` }} />}
+                  {element.type === 'line' && <div style={{ height: '2px', backgroundColor: element.color, width: '100px' }} />}
                   {selectedElement === element.id && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteElement(element.id)
-                      }}
-                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 shadow-lg"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); deleteElement(element.id); }} style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>✕</button>
                   )}
                 </div>
               ))}
-
               {currentPageData.elements.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                  <div className="text-center">
-                    <FileText className="w-16 h-16 mx-auto mb-2 opacity-50" />
-                    <p>Click tools to add content</p>
-                  </div>
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+                  <div style={{ textAlign: 'center' }}><div style={{ fontSize: '64px', marginBottom: '8px' }}>📄</div><p style={{ fontSize: '16px' }}>Click tools above to add content</p></div>
                 </div>
               )}
             </div>
@@ -328,137 +215,41 @@ export default function PDFBuilderEmbed() {
 
         {/* Properties Panel */}
         {selectedElementData && (
-          <div className="w-80 bg-white border-l border-gray-200 p-4 overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900">Properties</h3>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelectedElement(null)}
-              >
-                <X className="w-4 h-4" />
-              </Button>
+          <div style={{ width: '280px', backgroundColor: 'white', borderLeft: '1px solid #e5e7eb', padding: '16px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600' }}>Properties</h3>
+              <button onClick={() => setSelectedElement(null)} style={{ backgroundColor: 'transparent', border: 'none', cursor: 'pointer', fontSize: '20px', color: '#6b7280' }}>✕</button>
             </div>
-
-            <div className="space-y-4">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {selectedElementData.type === 'text' && (
                 <>
-                  <div>
-                    <Label>Text Content</Label>
-                    <Textarea
-                      value={selectedElementData.content}
-                      onChange={(e) =>
-                        updateElement(selectedElementData.id, { content: e.target.value })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label>Font Size</Label>
-                    <Input
-                      type="number"
-                      value={selectedElementData.fontSize}
-                      onChange={(e) =>
-                        updateElement(selectedElementData.id, { fontSize: parseInt(e.target.value) })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
+                  <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Text</label><textarea value={selectedElementData.content} onChange={(e) => updateElement(selectedElementData.id, { content: e.target.value })} style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '14px', minHeight: '80px' }} /></div>
+                  <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Font Size</label><input type="number" value={selectedElementData.fontSize} onChange={(e) => updateElement(selectedElementData.id, { fontSize: parseInt(e.target.value) })} style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '14px' }} /></div>
                 </>
               )}
-
-              <div>
-                <Label>Color</Label>
-                <Input
-                  type="color"
-                  value={selectedElementData.color}
-                  onChange={(e) =>
-                    updateElement(selectedElementData.id, { color: e.target.value })
-                  }
-                  className="mt-1"
-                />
+              <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Color</label><input type="color" value={selectedElementData.color} onChange={(e) => updateElement(selectedElementData.id, { color: e.target.value })} style={{ width: '100%', height: '40px', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer' }} /></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>X</label><input type="number" value={selectedElementData.x} onChange={(e) => updateElement(selectedElementData.id, { x: parseInt(e.target.value) })} style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '14px' }} /></div>
+                <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Y</label><input type="number" value={selectedElementData.y} onChange={(e) => updateElement(selectedElementData.id, { y: parseInt(e.target.value) })} style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '14px' }} /></div>
               </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label>X Position</Label>
-                  <Input
-                    type="number"
-                    value={selectedElementData.x}
-                    onChange={(e) =>
-                      updateElement(selectedElementData.id, { x: parseInt(e.target.value) })
-                    }
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label>Y Position</Label>
-                  <Input
-                    type="number"
-                    value={selectedElementData.y}
-                    onChange={(e) =>
-                      updateElement(selectedElementData.id, { y: parseInt(e.target.value) })
-                    }
-                    className="mt-1"
-                  />
-                </div>
-              </div>
-
               {(selectedElementData.type === 'rectangle' || selectedElementData.type === 'circle') && (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Width</Label>
-                    <Input
-                      type="number"
-                      value={selectedElementData.width}
-                      onChange={(e) =>
-                        updateElement(selectedElementData.id, { width: parseInt(e.target.value) })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label>Height</Label>
-                    <Input
-                      type="number"
-                      value={selectedElementData.height}
-                      onChange={(e) =>
-                        updateElement(selectedElementData.id, { height: parseInt(e.target.value) })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Width</label><input type="number" value={selectedElementData.width} onChange={(e) => updateElement(selectedElementData.id, { width: parseInt(e.target.value) })} style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '14px' }} /></div>
+                  <div><label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Height</label><input type="number" value={selectedElementData.height} onChange={(e) => updateElement(selectedElementData.id, { height: parseInt(e.target.value) })} style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '14px' }} /></div>
                 </div>
               )}
-
-              <Button
-                variant="destructive"
-                onClick={() => deleteElement(selectedElementData.id)}
-                className="w-full gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete Element
-              </Button>
+              <button onClick={() => deleteElement(selectedElementData.id)} style={{ width: '100%', padding: '10px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>🗑️ Delete</button>
             </div>
           </div>
         )}
       </div>
 
       {/* Page Navigation */}
-      <div className="bg-white border-t border-gray-200 p-3 flex items-center justify-center gap-2">
+      <div style={{ backgroundColor: 'white', borderTop: '1px solid #e5e7eb', padding: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
         {pages.map((_, index) => (
-          <Button
-            key={index}
-            size="sm"
-            variant={currentPage === index ? 'default' : 'outline'}
-            onClick={() => setCurrentPage(index)}
-          >
-            {index + 1}
-          </Button>
+          <button key={index} onClick={() => setCurrentPage(index)} style={{ padding: '6px 12px', backgroundColor: currentPage === index ? '#3b82f6' : 'white', color: currentPage === index ? 'white' : '#374151', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer', fontSize: '14px', minWidth: '40px' }}>{index + 1}</button>
         ))}
-        <Button size="sm" variant="outline" onClick={addPage}>
-          + Add Page
-        </Button>
+        <button onClick={addPage} style={{ padding: '6px 12px', backgroundColor: 'white', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>+ Page</button>
       </div>
     </div>
   )
