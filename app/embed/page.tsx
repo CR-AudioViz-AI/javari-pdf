@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card } from '@/components/ui/card'
-import { createClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase-client'
 import { jsPDF } from 'jspdf'
 
 type ElementType = 'text' | 'image' | 'rectangle' | 'circle' | 'line'
