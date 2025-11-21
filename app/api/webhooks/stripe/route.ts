@@ -3,8 +3,12 @@ import { headers } from 'next/headers'
 import { createSupabaseServerClient } from '@/lib/supabase-client'
 import Stripe from 'stripe'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-02-24.acacia'
+// Lazy Stripe initialization
+function getStripe() {
+  return new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: '2025-02-24.acacia'
+  })
+}
 })
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!
@@ -32,7 +36,7 @@ export async function POST(request: NextRequest) {
     // Verify webhook signature
     let event: Stripe.Event
     try {
-      event = stripe.webhooks.constructEvent(
+      event = getStripe().webhooks.constructEvent(
         body,
         signature,
         webhookSecret
