@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseBrowserClient } from '@/lib/supabase-client'
 import Stripe from 'stripe'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-02-24.acacia'
-})
+// Lazy Stripe initialization - only create when needed at runtime
+function getStripe() {
+  return new Stripe(process.env.STRIPE_SECRET_KEY!, {
+    apiVersion: '2025-02-24.acacia'
+  })
+}
 
 // Credit packages with pricing
 const CREDIT_PACKAGES = [
@@ -109,7 +112,7 @@ export async function POST(request: NextRequest) {
 
 async function createStripeCheckout(userId: string, creditPackage: any) {
   try {
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripe().checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
         {
