@@ -129,3 +129,7 @@ export async function deductCreditsAtomic(
     }
   }
 }
+
+
+// Export alias for compatibility
+export { createSupabaseBrowserClient as createClient }
