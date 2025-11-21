@@ -9,7 +9,6 @@ function getStripe() {
     apiVersion: '2025-02-24.acacia'
   })
 }
-})
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!
 
