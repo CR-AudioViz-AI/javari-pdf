@@ -183,7 +183,7 @@ export async function POST(request: NextRequest) {
     await deductCredits(userId, operation, result.filename);
 
     // Return the processed PDF
-    return new NextResponse(result.pdfBytes, {
+    return new NextResponse(Buffer.from(result.pdfBytes), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
