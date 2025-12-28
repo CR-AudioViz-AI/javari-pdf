@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
       p_reason: `PDF Conversion: ${conversionType}`
     });
 
-    return new NextResponse(result.pdfBytes, {
+    return new NextResponse(Buffer.from(result.pdfBytes), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
