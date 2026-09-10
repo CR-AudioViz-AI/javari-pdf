@@ -31,7 +31,7 @@ export default function Page() {
           </div>
         ))}
       </section>
-      <footer style={{ background: '#050609', borderTop: '1px solid rgba(255,255,255,0.04)', padding: '20px', textAlign: 'center' }}>
+      <footer data-app-chrome style={{ background: '#050609', borderTop: '1px solid rgba(255,255,255,0.04)', padding: '20px', textAlign: 'center' }}>
         <p style={{ color: '#374151', fontSize: 11, margin: 0 }}>© 2026 CR AudioViz AI, LLC — EIN: 39-3646201 · <a href="https://craudiovizai.com/auth/signup" style={{ color: '#ef4444', textDecoration: 'none' }}>Sign Up Free</a></p>
       </footer>
     </div>
